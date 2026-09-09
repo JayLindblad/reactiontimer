@@ -38,6 +38,13 @@ flashing.
 
 ## LED start lights
 
+**Shelving the physical LEDs for now?** Set `USE_PHYSICAL_LEDS` to `0` in
+`config.h` (this is the current default) and skip this section — no GPIOs
+get driven, the race state machine and WebSocket telemetry are completely
+unaffected, and the same 5-light build-up/hold/GO sequence renders instead
+as 5 circles on the OLED (`drawLightTree()` in the sketch). Flip it back to
+`1` once the LEDs are wired below; no other code changes are needed.
+
 Each of the 5x 10mm red LEDs gets its own GPIO through a current-limiting
 resistor (330Ω-470Ω for a ~10-15mA drive current on a 3.3V logic level; if
 you want them brighter, drive each LED through a 2N7000/BC337 transistor

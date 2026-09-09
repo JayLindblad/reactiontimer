@@ -103,11 +103,14 @@ simulator, now talking to the real firmware instead of a simulated peer.
 
 ## 5. Bring-up order
 
-1. **Breadboard + noise suppression bench test** — wire the 5 LEDs and both
-   buttons (with their pull-up + 100nF filter) on a breadboard, flash the
-   firmware, use the dashboard's Test Mode (F/J keys) to drive a few full
-   race cycles before touching real trigger hardware. Confirms the state
-   machine, LED sequencing, and WebSocket telemetry all work in isolation.
+1. **Breadboard + noise suppression bench test** — wire just the two
+   buttons (with their pull-up + 100nF filter) on a breadboard; the 5 LEDs
+   can stay shelved (`USE_PHYSICAL_LEDS 0` in `config.h`, the default) since
+   the OLED renders the same light tree until you're ready to wire them.
+   Flash the firmware, use the dashboard's Test Mode (F/J keys) to drive a
+   few full race cycles before touching real trigger hardware. Confirms the
+   state machine, light sequencing, and WebSocket telemetry all work in
+   isolation.
 2. **Flash + network verification** — confirm PoE Ethernet (or Wi-Fi
    fallback) comes up, the OLED shows the correct IP, and
    `http://<device-ip>/` / `http://reactiontimer.local/` loads the

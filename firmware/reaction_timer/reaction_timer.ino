@@ -106,7 +106,11 @@ void IRAM_ATTR lane2ISR() {
 
 void setLight(uint8_t i, bool on) {
   lightsOn[i] = on;
+#if USE_PHYSICAL_LEDS
   digitalWrite(LED_PINS[i], on ? HIGH : LOW);
+#endif
+  // lightsOn[] is updated either way, so the OLED light tree (drawLightTree())
+  // and the WebSocket "lights" telemetry stay accurate even with LEDs shelved.
 }
 
 void allLightsOff() {
@@ -373,21 +377,60 @@ void handleRoot() {
 // OLED status
 // ---------------------------------------------------------------------
 
+// Renders the same 5-light build-up/hold/GO tree the LEDs would show,
+// straight from lightsOn[] -- used in place of the physical LEDs while
+// USE_PHYSICAL_LEDS is 0. Filled circle = lit, outline = off.
+void drawLightTree(int16_t y) {
+  const int16_t d = 14, gap = 6, r = d / 2;
+  const int16_t totalW = NUM_LEDS * d + (NUM_LEDS - 1) * gap;
+  int16_t x = (OLED_WIDTH - totalW) / 2;
+  for (uint8_t i = 0; i < NUM_LEDS; i++) {
+    int16_t cx = x + i * (d + gap) + r;
+    int16_t cy = y + r;
+    if (lightsOn[i]) oled.fillCircle(cx, cy, r, SSD1306_WHITE);
+    else oled.drawCircle(cx, cy, r, SSD1306_WHITE);
+  }
+}
+
 void updateOled() {
   oled.clearDisplay();
+  drawLightTree(2); // occupies roughly y:2-16
+
   oled.setTextSize(1);
   oled.setTextColor(SSD1306_WHITE);
-  oled.setCursor(0, 0);
-  oled.println("Reaction Timer V1");
-  oled.print("IP: ");
-  oled.println(ipAddressStr);
-  oled.print("State: ");
+
+  oled.setCursor(0, 20);
+  oled.print("St:");
   oled.println(stateName(raceState));
-  if (historyCount > 0) {
+
+  oled.setCursor(0, 30);
+  oled.print("IP:");
+  oled.println(ipAddressStr);
+
+  if (raceState == ST_FALSE_START) {
+    oled.setCursor(0, 42);
+    oled.print("FALSE START - L");
+    oled.println(falseStartLane);
+  } else if (historyCount > 0) {
     RaceResult &r = history[historyCount - 1];
-    oled.print("Last winner: ");
+    oled.setCursor(0, 42);
+    oled.print("Win: ");
     oled.println(r.winner == 0 ? "-" : (r.winner == 1 ? "Lane 1" : "Lane 2"));
+
+    if (raceState == ST_FINISHED) {
+      char l1[12], l2[12];
+      if (!r.lane1Dnf && !r.lane1FalseStart) snprintf(l1, sizeof(l1), "%.0fms", r.lane1Ms);
+      else snprintf(l1, sizeof(l1), "--");
+      if (!r.lane2Dnf && !r.lane2FalseStart) snprintf(l2, sizeof(l2), "%.0fms", r.lane2Ms);
+      else snprintf(l2, sizeof(l2), "--");
+      oled.setCursor(0, 52);
+      oled.print("L1:");
+      oled.print(l1);
+      oled.print("  L2:");
+      oled.println(l2);
+    }
   }
+
   oled.display();
 }
 
@@ -454,7 +497,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(LANE1_BUTTON_PIN), lane1ISR, FALLING);
   attachInterrupt(digitalPinToInterrupt(LANE2_BUTTON_PIN), lane2ISR, FALLING);
 
+#if USE_PHYSICAL_LEDS
   for (uint8_t i = 0; i < NUM_LEDS; i++) pinMode(LED_PINS[i], OUTPUT);
+#endif
   allLightsOff();
 
   Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
@@ -495,8 +540,12 @@ void loop() {
     default: break;
   }
 
+  // With USE_PHYSICAL_LEDS off, the OLED *is* the light tree, so refresh it
+  // fast enough that the lights-out GO signal isn't laggy on-screen. 250ms
+  // is fine once real LEDs take over that job and the OLED is secondary.
   static uint32_t lastOledMs = 0;
-  if (millis() - lastOledMs > 250) {
+  const uint32_t oledIntervalMs = USE_PHYSICAL_LEDS ? 250 : 30;
+  if (millis() - lastOledMs > oledIntervalMs) {
     lastOledMs = millis();
     updateOled();
   }

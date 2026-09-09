@@ -46,6 +46,12 @@
 #define LANE2_BUTTON_PIN   15
 
 // ---------- F1-style start light tree (5x LED, left to right) ----------
+// Set to 0 to shelve the physical LEDs: no GPIOs are driven and the same
+// 5-light tree instead renders on the OLED (drawLightTree() in the .ino).
+// Flip to 1 once the LEDs are wired per docs/WIRING.md -- no other code
+// changes needed, lightsOn[] and the state machine are unaffected either way.
+#define USE_PHYSICAL_LEDS 0
+
 // Header: GPIO16=left7, GPIO17=right8, GPIO18=left9, GPIO23=right14, GPIO26=left15.
 // (GPIO19-22 skipped: JTAG MTDI/MTDO/MTCK/MTMS. GPIO34-36 skipped: strapping pins.)
 #define LED1_PIN 16
