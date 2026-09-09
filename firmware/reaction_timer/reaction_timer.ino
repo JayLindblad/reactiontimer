@@ -21,7 +21,7 @@
 //     processed in loop(), keeping ISRs minimal.
 
 #include <Arduino.h>
-#include <Wire.h>
+#include <SPI.h>
 #include <WebServer.h>
 #include <WebSocketsServer.h>
 #include <ArduinoJson.h>
@@ -44,7 +44,7 @@
 
 WebServer server(80);
 WebSocketsServer webSocket(81);
-Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
+Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &SPI, OLED_DC_PIN, OLED_RST_PIN, OLED_CS_PIN);
 
 enum RaceState : uint8_t { ST_IDLE, ST_SEQUENCE, ST_HOLD, ST_GO, ST_FALSE_START, ST_FINISHED };
 RaceState raceState = ST_IDLE;
@@ -502,8 +502,8 @@ void setup() {
 #endif
   allLightsOff();
 
-  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-  if (!oled.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
+  SPI.begin(OLED_CLK_PIN, -1 /* no MISO, display is write-only */, OLED_DIN_PIN, OLED_CS_PIN);
+  if (!oled.begin(SSD1306_SWITCHCAPVCC)) {
     Serial.println("SSD1306 OLED not found - continuing without display");
   } else {
     oled.clearDisplay();

@@ -29,7 +29,7 @@ docs/
   Lane 2 -------|--> GPIO ISR --+        |                          |
   handheld      |                        v                          |
   (RJ45/Cat5)   |          5x GPIO -> LED start-light tree          |
-                |          I2C -> OLED (IP / status)                |
+                |          SPI -> OLED (IP / status)                |
                 |                        |                          |
                 |             WebServer :80  (serves dashboard)     |
                 |             WebSocketsServer :81 (telemetry)      |

@@ -32,8 +32,11 @@ flashing.
 | Start light 3 (LED)    | `LED3_PIN` (18)          | Left 9     |                                           |
 | Start light 4 (LED)    | `LED4_PIN` (23)          | Right 14   |                                           |
 | Start light 5 (LED)    | `LED5_PIN` (26)          | Left 15    | Rightmost                                 |
-| OLED SDA               | `OLED_SDA_PIN` (27)      | Right 16   | I2C data                                 |
-| OLED SCL               | `OLED_SCL_PIN` (28)      | Left 17    | I2C clock                                |
+| OLED CLK (SCK)         | `OLED_CLK_PIN` (29)      | Right 18   | SPI clock                                |
+| OLED DIN (MOSI)        | `OLED_DIN_PIN` (30)      | Left 19    | SPI data in                              |
+| OLED CS                | `OLED_CS_PIN` (31)       | Right 20   | SPI chip select                          |
+| OLED DC                | `OLED_DC_PIN` (32)       | Left 21    | Data/command select                      |
+| OLED RST               | `OLED_RST_PIN` (33)      | Right 22   | Reset                                    |
 | PoE / Ethernet         | onboard RJ45 port        | —          | No user wiring - PHY hardwired on PCB    |
 
 ## LED start lights
@@ -59,20 +62,24 @@ GPIO ---[330-470R]---|>|--- GND
 Wire LED1..LED5 physically left-to-right on the light tree to match the
 firmware's build-up order (`LED_PINS[]` in config.h).
 
-## OLED (I2C SSD1306, 128x64)
+## OLED (SPI SSD1306, 128x64)
 
-Standard 4-wire I2C hookup:
+This is the 7-pin SPI variant (VCC, GND, DIN, CLK, CS, DC, RST) — a
+different module than the 4-pin I2C SSD1306 boards you'll see in most
+tutorials, so don't reuse I2C wiring instructions for it:
 
 ```
 OLED VCC -> 3.3V
 OLED GND -> GND
-OLED SDA -> OLED_SDA_PIN
-OLED SCL -> OLED_SCL_PIN
+OLED DIN -> OLED_DIN_PIN   (MOSI)
+OLED CLK -> OLED_CLK_PIN   (SCK)
+OLED CS  -> OLED_CS_PIN
+OLED DC  -> OLED_DC_PIN
+OLED RST -> OLED_RST_PIN
 ```
 
-Add 4.7kΩ pull-ups from SDA and SCL to 3.3V if your specific OLED breakout
-doesn't already carry them (most SSD1306 breakout boards do — check before
-doubling up).
+No pull-up resistors needed here — SPI doesn't use open-drain lines the
+way I2C does.
 
 ## Trigger buttons over RJ45 / Cat5 patch cable
 

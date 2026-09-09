@@ -62,11 +62,14 @@
 #define NUM_LEDS 5
 static const uint8_t LED_PINS[NUM_LEDS] = {LED1_PIN, LED2_PIN, LED3_PIN, LED4_PIN, LED5_PIN};
 
-// ---------- OLED status display (I2C SSD1306 128x64) ----------
-// Header: GPIO27 = right pin 16, GPIO28 = left pin 17.
-#define OLED_SDA_PIN   27
-#define OLED_SCL_PIN   28
-#define OLED_I2C_ADDR  0x3C
+// ---------- OLED status display (SPI SSD1306 128x64) ----------
+// 7-pin SPI module: VCC, GND, DIN(MOSI), CLK(SCK), CS, DC, RST.
+// Header: GPIO29=right18, GPIO30=left19, GPIO31=right20, GPIO32=left21, GPIO33=right22.
+#define OLED_CLK_PIN   29   // SCK
+#define OLED_DIN_PIN   30   // MOSI / DIN
+#define OLED_CS_PIN    31
+#define OLED_DC_PIN    32
+#define OLED_RST_PIN   33
 #define OLED_WIDTH     128
 #define OLED_HEIGHT    64
 
