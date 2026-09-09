@@ -6,33 +6,35 @@ The Waveshare ESP32-P4-Nano-ETH pairs the ESP32-P4 (no native Wi-Fi/BT) with
 an onboard **ESP32-C6** co-processor for wireless, talking over a dedicated
 **SDIO** bus, plus an onboard **RMII Ethernet PHY** wired to a fixed set of
 GPIOs for the PoE port. Both buses are hardwired at the factory and are
-**not** available on the general-purpose header. The GPIO numbers in this
-guide (and in `firmware/reaction_timer/config.h`) are a sane starting
-assignment for the *free* header pins, but board silkscreen/pinout
-revisions do change. Before wiring:
+**not** available on the general-purpose header, so they don't appear in
+the header pinout table at all.
 
-1. Pull the current pinout diagram from the Waveshare wiki for your exact
-   board revision.
-2. Confirm each pin below is (a) broken out on the header, (b) not one of
-   the SDIO/RMII/strapping pins, and (c) not a strapping pin (GPIO0, 3, 15,
-   45, 46 are the classic ESP32 strapping pins to avoid for buttons/LEDs).
-3. Update `config.h` if any number needs to change — every pin is defined
-   once, there.
+The GPIO numbers below come from the board's GPIO header pinout table
+(left/right header pin -> GPIO number) and are confirmed clear of:
+- the SDIO/RMII pins (not on the header to begin with),
+- the JTAG-muxed pins GPIO19-22 (MTDI/MTDO/MTCK/MTMS), and
+- the strapping pins GPIO34-36.
 
-## GPIO map (logical assignment, verify against silkscreen)
+The one thing this header table does *not* cover is the onboard Ethernet
+PHY's own init parameters (`ETH_PHY_*` in `config.h`) — those describe how
+the PHY is wired internally, not header pins, so pull those five values
+from Waveshare's official `ETH.begin()` demo for this board before
+flashing.
 
-| Signal                | GPIO (config.h)     | Notes                                   |
-|------------------------|---------------------|------------------------------------------|
-| Lane 1 trigger button  | `LANE1_BUTTON_PIN` (4)  | Active LOW, external pull-up + RC filter |
-| Lane 2 trigger button  | `LANE2_BUTTON_PIN` (5)  | Active LOW, external pull-up + RC filter |
-| Start light 1 (LED)    | `LED1_PIN` (6)       | Leftmost                                 |
-| Start light 2 (LED)    | `LED2_PIN` (7)       |                                           |
-| Start light 3 (LED)    | `LED3_PIN` (8)       |                                           |
-| Start light 4 (LED)    | `LED4_PIN` (9)       |                                           |
-| Start light 5 (LED)    | `LED5_PIN` (10)      | Rightmost                                 |
-| OLED SDA               | `OLED_SDA_PIN` (11)  | I2C data                                 |
-| OLED SCL               | `OLED_SCL_PIN` (12)  | I2C clock                                |
-| PoE / Ethernet         | onboard RJ45 port    | No user wiring - PHY hardwired on PCB    |
+## GPIO map
+
+| Signal                | GPIO (config.h)         | Header pin | Notes                                   |
+|------------------------|--------------------------|------------|------------------------------------------|
+| Lane 1 trigger button  | `LANE1_BUTTON_PIN` (14)  | Left 5     | Active LOW, external pull-up + RC filter |
+| Lane 2 trigger button  | `LANE2_BUTTON_PIN` (15)  | Right 6    | Active LOW, external pull-up + RC filter |
+| Start light 1 (LED)    | `LED1_PIN` (16)          | Left 7     | Leftmost                                 |
+| Start light 2 (LED)    | `LED2_PIN` (17)          | Right 8    |                                           |
+| Start light 3 (LED)    | `LED3_PIN` (18)          | Left 9     |                                           |
+| Start light 4 (LED)    | `LED4_PIN` (23)          | Right 14   |                                           |
+| Start light 5 (LED)    | `LED5_PIN` (26)          | Left 15    | Rightmost                                 |
+| OLED SDA               | `OLED_SDA_PIN` (27)      | Right 16   | I2C data                                 |
+| OLED SCL               | `OLED_SCL_PIN` (28)      | Left 17    | I2C clock                                |
+| PoE / Ethernet         | onboard RJ45 port        | —          | No user wiring - PHY hardwired on PCB    |
 
 ## LED start lights
 

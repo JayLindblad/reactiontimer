@@ -58,12 +58,14 @@ work in V2.
 
 ## 2. Pinout
 
-See [`docs/WIRING.md`](docs/WIRING.md) for the full table, the RJ45
-noise-filter schematic, and the **important caveat about verifying GPIO
-numbers against your board's exact silkscreen revision** before wiring
-anything — the ESP32-P4-Nano-ETH's onboard Ethernet PHY and Wi-Fi
-co-processor both use fixed, non-header GPIOs, and header breakouts differ
-across revisions of this board.
+See [`docs/WIRING.md`](docs/WIRING.md) for the full table and the RJ45
+noise-filter schematic. GPIO numbers are taken directly from the board's
+GPIO header pinout table and avoid the JTAG-muxed pins (GPIO19-22) and the
+strapping pins (GPIO34-36); the onboard Ethernet PHY and Wi-Fi co-processor
+use separate, non-header GPIOs entirely, so they don't factor into this
+table. The one number still worth double-checking before flashing is the
+`ETH_PHY_*` block in `config.h` (the PHY's own internal init params, not
+header pins) against Waveshare's official `ETH.begin()` demo.
 
 All pin numbers live in `firmware/reaction_timer/config.h` — change them
 there once rather than hunting through the sketch.

@@ -2,16 +2,16 @@
 // Pin map and tunables for the STEM Racing Reaction Timer, Prototype V1.
 // Target board: Waveshare ESP32-P4-Nano-ETH.
 //
-// *** VERIFY BEFORE WIRING ***
-// The ESP32-P4 has no native Wi-Fi/BT (it talks to an onboard ESP32-C6 over
-// SDIO) and the onboard RJ45 uses a factory-wired RMII PHY. Both the SDIO
-// bus and the RMII bus occupy fixed GPIOs on this board that are NOT
-// available on the GPIO header. The pin numbers below are for the FREE
-// header pins only, but you must cross-check them against the current
-// Waveshare wiki pinout diagram for your board revision before soldering
-// anything, because header breakouts have changed between hardware
-// revisions of this board. Treat every GPIO number in this file as a
-// starting point to confirm, not a guarantee.
+// GPIO assignments below are taken from the board's GPIO header pinout
+// table (left/right header pin -> GPIO number), which already excludes the
+// SDIO (Wi-Fi co-processor) and RMII (onboard Ethernet PHY) pins since
+// those are hardwired PCB-side and never exposed on the header in the
+// first place. Every GPIO chosen below is confirmed free of JTAG
+// (MTDI/MTDO/MTCK/MTMS on GPIO19-22) and strapping-pin (GPIO34-36)
+// functions per that table. The one item NOT covered by the header table,
+// and still worth confirming against Waveshare's official ETH.begin() demo
+// before flashing, is the ETH_PHY_* block below -- those describe the
+// onboard PHY's internal wiring, not header pins.
 
 #pragma once
 
@@ -41,21 +41,25 @@
 // ---------- Trigger buttons (RJ45 handhelds) ----------
 // Active LOW: external 1k-4.7k pull-up + 100nF cap to GND per docs/WIRING.md.
 // Button shorts the signal line to GND when pressed.
-#define LANE1_BUTTON_PIN   4
-#define LANE2_BUTTON_PIN   5
+// Header: GPIO14 = left pin 5, GPIO15 = right pin 6.
+#define LANE1_BUTTON_PIN   14
+#define LANE2_BUTTON_PIN   15
 
 // ---------- F1-style start light tree (5x LED, left to right) ----------
-#define LED1_PIN 6
-#define LED2_PIN 7
-#define LED3_PIN 8
-#define LED4_PIN 9
-#define LED5_PIN 10
+// Header: GPIO16=left7, GPIO17=right8, GPIO18=left9, GPIO23=right14, GPIO26=left15.
+// (GPIO19-22 skipped: JTAG MTDI/MTDO/MTCK/MTMS. GPIO34-36 skipped: strapping pins.)
+#define LED1_PIN 16
+#define LED2_PIN 17
+#define LED3_PIN 18
+#define LED4_PIN 23
+#define LED5_PIN 26
 #define NUM_LEDS 5
 static const uint8_t LED_PINS[NUM_LEDS] = {LED1_PIN, LED2_PIN, LED3_PIN, LED4_PIN, LED5_PIN};
 
 // ---------- OLED status display (I2C SSD1306 128x64) ----------
-#define OLED_SDA_PIN   11
-#define OLED_SCL_PIN   12
+// Header: GPIO27 = right pin 16, GPIO28 = left pin 17.
+#define OLED_SDA_PIN   27
+#define OLED_SCL_PIN   28
 #define OLED_I2C_ADDR  0x3C
 #define OLED_WIDTH     128
 #define OLED_HEIGHT    64
