@@ -35,6 +35,7 @@ header{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .status{font-weight:800;letter-spacing:.22em;font-size:13px;padding:8px 18px;border-radius:99px;border:1px solid var(--line);color:var(--dim);min-width:120px;text-align:center;white-space:nowrap}
 .status.live{color:var(--amber);border-color:var(--amber)}
 .status.go{color:var(--green);border-color:var(--green);box-shadow:0 0 20px rgba(31,224,106,.35)}
+.status.bad{color:var(--red);border-color:var(--red)}
 
 .gantry-wrap{display:flex;flex-direction:column;align-items:center}
 .gantry{display:flex;gap:clamp(12px,2.2vw,34px);padding:clamp(16px,2.2vw,32px) clamp(20px,3vw,44px);background:linear-gradient(#171922,#0a0b10);border:1px solid var(--line);border-radius:22px 22px 0 0;box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06)}
@@ -89,6 +90,10 @@ body.many .lamp{width:clamp(44px,6vw,96px)}
 .lane.win{border-color:var(--green);box-shadow:0 0 0 1px var(--green),0 0 44px rgba(31,224,106,.28),inset 0 0 70px rgba(31,224,106,.07);animation:winpop .5s cubic-bezier(.2,1.6,.4,1)}
 .lane.win .badge{display:inline-block}
 .lane.win .tag{display:none}
+.stk{display:none;font-size:10px;font-weight:900;letter-spacing:.18em;color:#fff;background:var(--red);padding:4px 10px;border-radius:99px;white-space:nowrap}
+.lane.stuck{border-color:var(--red)}
+.lane.stuck .stk{display:inline-block}
+.lane.stuck .tag{display:none}
 .lane.win .rt:not(.jump):not(.none){color:var(--green);text-shadow:0 0 30px rgba(31,224,106,.45)}
 @keyframes winpop{0%{transform:scale(.97)}60%{transform:scale(1.015)}100%{transform:scale(1)}}
 .sub{font-size:14px;color:var(--dim);min-height:20px;margin-top:6px;letter-spacing:.04em}
@@ -165,6 +170,17 @@ input[type=color]{width:36px;height:30px;padding:2px;cursor:pointer}
 .tile .te{font-size:10px;color:var(--dim);margin-top:10px;min-height:13px;font-variant-numeric:tabular-nums}
 .tile.down{background:color-mix(in srgb,var(--tc) 22%,transparent);border-color:var(--tc);box-shadow:0 0 26px color-mix(in srgb,var(--tc) 45%,transparent)}
 .tile.down .ts{color:var(--tc)}
+.tile .tz{font-size:10px;color:var(--dim);letter-spacing:.08em;margin-top:4px;font-variant-numeric:tabular-nums}
+.tile .tz.bad{color:var(--red);font-weight:800}
+.tile.stuck{border-color:var(--red);box-shadow:0 0 26px rgba(255,34,49,.4)}
+.tile.stuck .ts{color:var(--red)}
+.tile.want{border-color:var(--amber);box-shadow:0 0 0 2px var(--amber);animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 5px rgba(255,176,32,.35)}}
+#dInfo b.ok,#dStat b.ok,#wkOut b.ok,#dXt b.ok{color:var(--green)}
+#dInfo b.bad,#dStat b.bad,#wkOut b.bad,#dXt b.bad{color:var(--red)}
+#dInfo b.warn,#dStat b.warn,#wkOut b.warn,#dXt b.warn{color:var(--amber)}
+#wkOut{flex-direction:column;gap:4px}
+.wkp{font-size:15px;font-weight:800;letter-spacing:.06em;color:var(--txt)}
 .dstat{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:12px;color:var(--dim);padding:10px 12px;border:1px solid var(--line);border-radius:10px}
 .dstat i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:6px;box-shadow:0 0 8px var(--green)}
 .dhelp{font-size:12px;color:var(--dim);display:flex;flex-direction:column;gap:6px;line-height:1.45}
@@ -307,13 +323,22 @@ input[type=color]{width:36px;height:30px;padding:2px;cursor:pointer}
     <div class="card-h"><h2>BUTTON TEST</h2><button class="x" id="dX" aria-label="Close">✕</button></div>
     <p class="dnote">Press each button — its tile lights up the moment the ESP sees it. Rounds can't be started while this panel is open (including the physical START button).</p>
     <div class="dgrid" id="dGrid"></div>
-    <div class="dstat" id="dStat">Waiting for the ESP…</div>
+    <div class="dstat" id="dXt">Crosstalk: none seen.</div>
     <div class="dhelp">
-      <p><b>Lit up without touching it?</b> The signal is shorted to ground — check the keystone punch-down and the switch wiring.</p>
+      <p><b>Lit up without touching it, or STUCK?</b> The signal is shorted to ground — check the keystone punch-down and the switch wiring. Races won't start while an active lane is held low.</p>
       <p><b>Never lights up?</b> Open circuit: broken wire, loose punch-down, wrong GPIO, or the switch is wired to a spare pair.</p>
       <p><b>More than 1 edge per press</b> is normal switch bounce and harmless — only the first edge is ever timed.</p>
+      <p><b>NOISE above 0</b> means the pin saw a pulse too short to be a finger — electrical noise on the cable. In a round that shows up as a false jump start (marked <b>JUMP START?</b>). Fixes: shorter cable, a 4.7 kΩ pull-up from the pin to 3.3 V at the board, and the switch on one twisted pair (pin + GND) rather than two separate wires.</p>
+      <p><b>Crosstalk</b> means pressing one button put a pulse on another lane — the lanes share a cable or a pair. Give each lane its own twisted pair with its own ground.</p>
     </div>
     <div class="btns"><button id="dLed">TEST LED: OFF</button><button id="dBeep" class="on">BEEP: ON</button><button id="dReset">RESET COUNTS</button></div>
+    <h4>SLOT CHECK</h4>
+    <p class="dnote">Walks through each slot on the box in turn: press the button it asks for. Catches swapped cables, dead slots and shorts. Skip slots you haven't filled.</p>
+    <div class="dstat" id="wkOut">Not run yet.</div>
+    <div class="btns"><button class="primary" id="wkRun">CHECK SLOTS</button><button id="wkSkip" disabled>SKIP SLOT</button></div>
+    <h4>BOARD HEALTH</h4>
+    <div class="dstat" id="dStat">Waiting for the ESP…</div>
+    <div class="dstat" id="dInfo">&nbsp;</div>
     <h4>TIMING SELF-TEST</h4>
     <p class="dnote">10 quick rounds. In each, the ESP briefly pulls lane 1's input low itself at a moment it records, which checks press timing end to end. It also checks how close this screen's lights-out lands to the ESP's schedule. Keep this tab in front; nothing is saved. Don't press lane 1 while it runs.</p>
     <div class="dstat" id="stOut">Not run yet.</div>
@@ -333,7 +358,7 @@ const LANE_IDX=[...Array(MAX_LANES).keys()];
 const lanesEl=$('#lanes');
 lanesEl.innerHTML=LANE_IDX.map(i=>`
   <div class="lane" id="lane${i}">
-    <div class="lh"><div class="nm" contenteditable spellcheck="false">Driver ${i+1}</div><span class="badge">WINNER</span><span class="tag">LANE ${i+1} · ${PIN_LABELS[i]}</span></div>
+    <div class="lh"><div class="nm" contenteditable spellcheck="false">Driver ${i+1}</div><span class="badge">WINNER</span><span class="stk" title="This lane's input is held low — a stuck button or shorted cable. Rounds won't start until it's released.">STUCK · CHECK WIRING</span><span class="tag">LANE ${i+1} · ${PIN_LABELS[i]}</span></div>
     <div class="mid"><svg class="chart"></svg><div class="rt hidden"></div><div class="sub hidden">&nbsp;</div></div>
     <div class="stats"><div><b class="best">—</b><small>BEST</small></div><div><b class="avg">—</b><small>AVG · LAST 10</small></div><div><b class="cnt">0</b><small>STARTS</small></div><div><b class="jmp">0</b><small>JUMPS</small></div></div>
   </div>`).join('');
@@ -345,7 +370,7 @@ const lamps=[...document.querySelectorAll('.lamp')];
 const S={lanes:2,minHold:1.0,maxHold:3.0,antiMs:100,screenLag:0,autoDelay:4,sound:true,auto:false,graphRuns:10,startScreen:true,reveal:'instant',colors:[...DEFAULT_COLORS]};
 let data={history:[],names:LANE_IDX.map(i=>`Driver ${i+1}`)};
 let state='idle', laneRes=LANE_IDX.map(()=>null), autoT=null, ws=null, connected=false;
-let dbgOpen=false;
+let dbgOpen=false, stuckMask=0;
 const view=LANE_IDX.map(()=>'chart');
 
 // ---------- helpers ----------
@@ -368,10 +393,11 @@ function connect(){
   const host=location.hostname||'reaction.local';
   setConn('wait','CONNECTING…');
   try{ws=new WebSocket(`ws://${host}:81/`)}catch(e){setTimeout(connect,2000);return}
-  ws.onopen=()=>{connected=true;setConn('ok','ESP CONNECTED');sendCfg();if(dbgOpen)send('debug 1');syncStart()};
+  ws.onopen=()=>{connected=true;setConn('ok','ESP CONNECTED');sendCfg();if(dbgOpen){send('debug 1');send('info')}syncStart()};
   ws.onclose=()=>{
     connected=false;setConn('bad','RECONNECTING…');syncStop();stopPlan();
     if(ST.on)stEnd('Lost connection to the ESP during the test.');
+    if(WK.on)wkEnd('Lost connection to the ESP during the slot check.');
     if(state==='sequence'||state==='go'){state='idle';lampsOff();setStatus('','READY');showAllCharts()}
     if(dbgOpen)$('#dStat').textContent='Lost connection to the ESP — reconnecting…';
     setTimeout(connect,2000);
@@ -469,7 +495,32 @@ function handle(m){
       dbgPin(m.i,m.v,m.e); break;
     case 'stat':
       if(dbgOpen) dbgStat(m); break;
+    case 'bnc':
+      if(dbg[m.i]){dbg[m.i].edges=Math.max(1,m.e|0);renderTile(m.i)} break;
+    case 'xt':
+      dbgXt(m.from,m.to); break;
+    case 'info':
+      dbgInfo(m); break;
+    // wiring health
+    case 'hello':
+      applyStuck(m.stuck|0); break;
+    case 'stuck':
+      applyStuck(m.m|0); break;
+    case 'refused':
+      onRefused(m); break;
   }
+}
+// A lane held LOW (stuck button / shorted cable) can never register a press
+function applyStuck(mask){
+  stuckMask=mask;
+  laneEls.forEach((el,i)=>el.classList.toggle('stuck',!!(mask>>i&1)));
+  dbg.forEach((_,i)=>renderTile(i));
+}
+function onRefused(m){
+  const held=(m.stuck||[]).map(i=>`LANE ${i+1}`).join(' & ');
+  setStatus('bad',`${held} HELD / SHORTED`); beep(220,.25);
+  if(S.auto)toggleAuto();
+  if(m.test&&ST.on)stEnd('Lane 1 (GPIO 5) is held low or shorted — release it or fix the wiring, then run the test again.');
 }
 // The ESP has already corrected the time (by the start screen's lights-out
 // frame) and judged it ok / anti / jump, so every screen shows the same thing.
@@ -477,16 +528,19 @@ let held=LANE_IDX.map(()=>null);   // "Together" reveal: results wait here until
 function onResult(m){
   const i=m.lane; if(!(i>=0&&i<MAX_LANES))return;
   let res;
-  if(m.status==='jump') res={status:'jump'};
+  if(m.status==='ok'||m.status==='anti')flushPlan();
+  // The pin was never seen held down: an electrical glitch, not a finger. Shown, but kept out of the history.
+  if(m.noise) res={status:m.status==='jump'?'jump':'noise',noise:true,rt:m.status==='jump'?null:m.us/1000};
+  else if(m.status==='jump') res={status:'jump'};
   else if(m.status==='none') res={status:'none'};
-  else{flushPlan();res={rt:m.us/1000,status:m.status==='anti'?'anti':'ok'}}
+  else res={rt:m.us/1000,status:m.status==='anti'?'anti':'ok'};
   if(S.reveal==='together'){held[i]=res;return}
   commit(i,res);
 }
 function commit(i,res){
   if(res.status==='ok'){const prevBest=stats(data.names[i]).best;res.pb=prevBest==null||res.rt<prevBest}
   laneRes[i]=res;
-  if(res.status!=='none') record(i,res.rt==null?null:res.rt,res.status);
+  if(res.status!=='none'&&!res.noise) record(i,res.rt==null?null:res.rt,res.status);
   showResult(i);
 }
 function revealHeld(){LANE_IDX.forEach(i=>{if(held[i]){commit(i,held[i]);held[i]=null}})}
@@ -539,7 +593,12 @@ function showResult(i){
   view[i]='result';
   const el=laneEls[i], r=el.querySelector('.rt'), s=el.querySelector('.sub');
   el.querySelector('.chart').classList.add('hidden'); r.classList.remove('hidden'); s.classList.remove('hidden');
-  if(res.status==='jump'){r.className='rt jump';r.textContent='JUMP START';s.className='sub jump';s.textContent='Pressed before the light went out'}
+  if(res.noise){
+    r.className='rt '+(res.status==='jump'?'jump':'anti');
+    r.innerHTML=res.status==='jump'?'JUMP START?':fmt(res.rt)+'<small>s ?</small>';
+    s.className='sub anti';s.textContent='Possible electrical noise — the button was never seen held down. Not saved; check NOISE in TEST.';
+  }
+  else if(res.status==='jump'){r.className='rt jump';r.textContent='JUMP START';s.className='sub jump';s.textContent='Pressed before the light went out'}
   else if(res.status==='none'){r.className='rt none';r.textContent='NO PRESS';s.className='sub';s.innerHTML='&nbsp;'}
   else if(res.status==='anti'){r.className='rt anti';r.innerHTML=fmt(res.rt)+'<small>s</small>';s.className='sub anti';s.textContent=`Under ${S.antiMs} ms — likely anticipated`}
   else{
@@ -675,23 +734,40 @@ const DBG=[
   {n:'LANE 3',g:12,c:'var(--lane2)'},{n:'LANE 4',g:13,c:'var(--lane3)'},
   {n:'START',g:14,c:'var(--green)'}
 ];
-const dbg=DBG.map(()=>({down:false,count:0,edges:0,since:0}));
-let dbgLed=false, dbgBeep=true, dbgHB=null, dbgTick=null;
-$('#dGrid').innerHTML=DBG.map((p,i)=>`<div class="tile" id="t${i}" style="--tc:${p.c}"><div class="tn">${p.n}</div><div class="tg">GPIO ${p.g}</div><div class="ts">RELEASED</div><div class="tcnt">0</div><div class="tcl">PRESSES</div><div class="te">&nbsp;</div></div>`).join('');
+const dbg=DBG.map(()=>({down:false,count:0,edges:0,since:0,g:0}));
+let dbgLed=false, dbgBeep=true, dbgHB=null, dbgTick=null, dbgXts={};
+const pinName=i=>i===4?'START':`Lane ${i+1}`;
+$('#dGrid').innerHTML=DBG.map((p,i)=>`<div class="tile" id="t${i}" style="--tc:${p.c}"><div class="tn">${p.n}</div><div class="tg">GPIO ${p.g}</div><div class="ts">RELEASED</div><div class="tcnt">0</div><div class="tcl">PRESSES</div><div class="te">&nbsp;</div><div class="tz">NOISE 0</div></div>`).join('');
 function renderTile(i){
   const d=dbg[i], el=$('#t'+i); if(!el)return;
+  const stuck=!!(stuckMask>>i&1);
   el.classList.toggle('down',d.down);
-  el.querySelector('.ts').textContent=d.down?'PRESSED':'RELEASED';
+  el.classList.toggle('stuck',stuck);
+  el.querySelector('.ts').textContent=stuck?'STUCK':d.down?'PRESSED':'RELEASED';
   el.querySelector('.tcnt').textContent=d.count;
-  el.querySelector('.te').textContent=d.down
+  const z=el.querySelector('.tz'); z.textContent=`NOISE ${d.g}`; z.classList.toggle('bad',d.g>0);
+  el.querySelector('.te').textContent=stuck
+    ? 'held low — shorted?'
+    : d.down
     ? `held ${((performance.now()-d.since)/1000).toFixed(1)} s`
     : (d.count ? (d.edges>1 ? `${d.edges} edges · bounce OK` : 'clean press') : '\u00a0');
 }
 function dbgPin(i,v,e){
   const d=dbg[i]; if(!d)return;
   const down=v===0;
-  if(down&&!d.down){d.count++;d.edges=Math.max(1,e||1);d.since=performance.now();if(dbgBeep)beep(i===4?520:700+i*120,.05,true)}
+  if(down&&!d.down){d.count++;d.edges=Math.max(1,e||1);d.since=performance.now();if(dbgBeep)beep(i===4?520:700+i*120,.05,true);wkPress(i)}
   d.down=down; renderTile(i);
+}
+// Pressing one button put a pulse on another pin
+function dbgXt(from,to){
+  if(!dbg[from]||!dbg[to])return;
+  const k=`${from}>${to}`; dbgXts[k]=(dbgXts[k]||0)+1; renderXt();
+}
+function renderXt(){
+  const ks=Object.keys(dbgXts);
+  $('#dXt').innerHTML=ks.length
+    ? '<span>Crosstalk:</span>'+ks.map(k=>{const [a,b]=k.split('>').map(Number);return `<span><b class="bad">${pinName(a)} → ${pinName(b)}</b> ×${dbgXts[k]}</span>`}).join('')
+    : 'Crosstalk: none seen.';
 }
 function dbgStat(m){
   const up=m.up|0, h=Math.floor(up/3600), mi=Math.floor(up/60)%60, s=up%60;
@@ -700,20 +776,33 @@ function dbgStat(m){
   if(m.ap) wifi='hotspot mode';
   else{const r=m.rssi;wifi=`${r} dBm · ${r>=-60?'excellent':r>=-70?'good':r>=-80?'fair':'weak'}`}
   const c=clockBest(), sync=c?`±${(c.rtt/2).toFixed(1)} ms`:'not synced';
-  $('#dStat').innerHTML=`<span><i></i>ESP online</span><span>WiFi: ${wifi}</span><span>Clock sync ${sync}</span><span>Uptime ${upt}</span><span>Free memory ${Math.round(m.heap/1024)} KB</span>`;
+  // Worst stall between loop() runs in the last second — delays results and the on-board LED, never the timing
+  const lp=(m.loop|0)/1000, lc=lp<=5?'ok':lp<=20?'warn':'bad';
+  $('#dStat').innerHTML=`<span><i></i>ESP online</span><span>WiFi: ${wifi}</span><span>Clock sync ${sync}</span><span>Uptime ${upt}</span>`+
+    `<span>Free memory ${Math.round(m.heap/1024)} KB · ${m.frag|0}% fragmented</span>`+
+    `<span>Slowest loop <b class="${lc}">${lp.toFixed(1)} ms</b></span><span>Pages connected ${m.cl|0}</span>`;
+  if(Array.isArray(m.g))m.g.forEach((g,i)=>{if(dbg[i]&&dbg[i].g!==g){dbg[i].g=g;renderTile(i)}});
+}
+// Sent once per panel open. Reset reasons 1-3 are crashes; a cheap board browning out usually shows up here.
+function dbgInfo(m){
+  const crash=m.rr>=1&&m.rr<=3;
+  $('#dInfo').innerHTML=`<span>Last reset: <b class="${crash?'bad':'ok'}">${esc(m.rst)}</b>${crash?' — it crashed or locked up. If it repeats: a better USB supply/cable, or a 100–470 µF capacitor across 5V–GND.':''}</span>`+
+    `<span>${m.ap?'Hotspot':'WiFi'} IP ${esc(m.ip)}</span><span>Firmware built ${esc(m.build)}</span>`+
+    `<span>Chip ${esc(m.chip)} · flash ${Math.round(m.flash/1024)} MB · core ${esc(m.core)}</span>`;
 }
 function openDebug(){
   if(dbgOpen)return;
   if($('#settings').classList.contains('on'))toggleSettings();
   dbgOpen=true; $('#debug').classList.add('on'); try{ac()}catch(e){}
   $('#dStat').textContent=connected?'Waiting for the ESP…':'Not connected to the ESP — tiles will update once it reconnects.';
-  send('debug 1');
+  send('debug 1'); send('info');
   dbgHB=setInterval(()=>send('debug 1'),4000);   // heartbeat — the ESP leaves test mode if this stops
   dbgTick=setInterval(()=>dbg.forEach((d,i)=>{if(d.down)renderTile(i)}),100);
 }
 function closeDebug(){
   if(!dbgOpen)return;
   if(ST.on){send('abort');stEnd('Stopped — the panel was closed.')}
+  if(WK.on)wkEnd('Stopped — the panel was closed.');
   dbgOpen=false; $('#debug').classList.remove('on');
   clearInterval(dbgHB); clearInterval(dbgTick);
   if(dbgLed){dbgLed=false;send('led 0');$('#dLed').textContent='TEST LED: OFF';$('#dLed').classList.remove('on')}
@@ -721,10 +810,60 @@ function closeDebug(){
 }
 $('#dLed').onclick=()=>{dbgLed=!dbgLed;send('led '+(dbgLed?1:0));$('#dLed').textContent='TEST LED: '+(dbgLed?'ON':'OFF');$('#dLed').classList.toggle('on',dbgLed)};
 $('#dBeep').onclick=()=>{dbgBeep=!dbgBeep;$('#dBeep').textContent='BEEP: '+(dbgBeep?'ON':'OFF');$('#dBeep').classList.toggle('on',dbgBeep)};
-$('#dReset').onclick=()=>{dbg.forEach((d,i)=>{d.count=0;d.edges=0;renderTile(i)})};
+$('#dReset').onclick=()=>{send('dreset');dbgXts={};renderXt();dbg.forEach((d,i)=>{d.count=0;d.edges=0;d.g=0;renderTile(i)})};
 $('#dX').onclick=closeDebug;
 $('#debug').addEventListener('click',e=>{if(e.target.id==='debug')closeDebug()});
 dbg.forEach((_,i)=>renderTile(i));
+
+// ---------- slot check ----------
+// Asks for each slot in turn and checks the right pin answers: catches swapped
+// cables (another pin fires), shorts (already held) and dead slots (nothing).
+const WK={on:false,step:0,res:[],t:null};
+const slotName=i=>i===4?'the START button':`SLOT ${i+1}`;
+function wkRun(){
+  if(WK.on||!connected)return;
+  Object.assign(WK,{on:true,step:0,res:[]});
+  $('#wkRun').disabled=true; $('#wkSkip').disabled=false;
+  wkPrompt();
+}
+function wkPrompt(){
+  clearTimeout(WK.t);
+  const i=WK.step;
+  DBG.forEach((_,k)=>$('#t'+k).classList.toggle('want',k===i));
+  if(i>=DBG.length)return wkReport();
+  if(dbg[i].down||stuckMask>>i&1){
+    WK.res[i]={s:'bad',msg:'already held down before you pressed it — shorted cable or stuck switch'};
+    WK.step++; return wkPrompt();
+  }
+  $('#wkOut').innerHTML=`<div class="wkp">Press ${slotName(i)}</div><div>${i+1} of ${DBG.length} · expecting ${pinName(i)} (GPIO ${DBG[i].g})</div>`;
+  WK.t=setTimeout(()=>{if(WK.on&&WK.step===i)$('#wkOut').insertAdjacentHTML('beforeend',`<div><b class="warn">Nothing yet.</b> No signal — unplugged, broken wire or loose punch-down. Press SKIP SLOT if it's empty.</div>`)},15000);
+}
+function wkPress(j){
+  if(!WK.on)return;
+  const i=WK.step;
+  WK.res[i]=j===i
+    ? {s:'ok',msg:'OK'}
+    : {s:'bad',msg:`${pinName(j)} (GPIO ${DBG[j].g}) fired instead — those two cables are probably swapped (or the wrong button was pressed)`};
+  WK.step++; wkPrompt();
+}
+function wkSkip(){
+  if(!WK.on)return;
+  WK.res[WK.step]={s:'warn',msg:'skipped — empty slot, or no signal (open circuit)'};
+  WK.step++; wkPrompt();
+}
+function wkEnd(msg){
+  WK.on=false; clearTimeout(WK.t);
+  $('#wkRun').disabled=false; $('#wkSkip').disabled=true;
+  DBG.forEach((_,k)=>$('#t'+k).classList.remove('want'));
+  if(msg)$('#wkOut').textContent=msg;
+}
+function wkReport(){
+  wkEnd();
+  const tag={ok:'PASS',warn:'SKIP',bad:'FAIL'};
+  $('#wkOut').innerHTML=WK.res.map((r,i)=>`<div><b class="${r.s}">${tag[r.s]}</b> ${slotName(i)} — ${r.msg}</div>`).join('');
+}
+$('#wkRun').onclick=wkRun;
+$('#wkSkip').onclick=wkSkip;
 
 // ---------- timing self-test ----------
 const ST={on:false,left:0,rows:[]}, ST_ROUNDS=10;
