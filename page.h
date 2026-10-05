@@ -270,7 +270,7 @@ input[type=color]{width:36px;height:30px;padding:2px;cursor:pointer}
     <button id="bTest" title="Button test" aria-label="Button test"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span class="tx">TEST</span><kbd>T</kbd></button>
     <button id="bSet" title="Settings" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="tx">SETTINGS</span><kbd>S</kbd></button>
     <button id="bFs" title="Fullscreen" aria-label="Fullscreen"><svg class="ic" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span class="tx">FULLSCREEN</span><kbd>F</kbd></button>
-    <span class="hint">Times are measured on the ESP8266 · Click a name to change driver</span>
+    <span class="hint">Times and winners are decided on the ESP8266 · Click a name to change driver</span>
   </div>
 </main>
 
@@ -290,7 +290,9 @@ input[type=color]{width:36px;height:30px;padding:2px;cursor:pointer}
     <div class="row"><span>Solid LED hold — max (s)</span><input type="number" inputmode="decimal" id="sMax" step="0.1" min="0.3" max="10"></div>
     <div class="row"><span>Anticipation threshold (ms)<small>Faster than this is flagged as a guess. 0 = off</small></span><input type="number" inputmode="numeric" id="sAnti" step="10" min="0"></div>
     <div class="row"><span>Auto mode restart (s)</span><input type="number" inputmode="numeric" id="sAuto" step="1" min="1"></div>
-    <div class="row"><span>Screen lag (ms)<small>Your display's own delay, subtracted from every time. 0 if unknown</small></span><input type="number" inputmode="numeric" id="sLag" step="1" min="0" max="200"></div>
+    <div class="row"><span>This device is the start screen<small>Only the screen drivers watch should report — turn off on phones/remotes</small></span><input type="checkbox" id="sStartScr"></div>
+    <div class="row"><span>Screen lag (ms)<small>Your display's own delay, subtracted from every time. 0 if unknown. Start screen only</small></span><input type="number" inputmode="numeric" id="sLag" step="1" min="0" max="200"></div>
+    <div class="row"><span>Result reveal<small>"Together" hides who finished first until the round ends</small></span><select id="sReveal"><option value="instant">Instantly</option><option value="together">Together</option></select></div>
     <div class="row"><span>Beep on each flash</span><input type="checkbox" id="sSound"></div>
     <div class="row"><span>Runs shown on graph</span><select id="sRuns"><option value="5">Last 5</option><option value="10">Last 10</option></select></div>
     <h4>LANE COLORS</h4>
@@ -340,7 +342,7 @@ $('#colorRows').innerHTML=LANE_IDX.map(i=>`<div class="row crow"><span>Lane ${i+
 const colorRows=[...document.querySelectorAll('.crow')];
 
 const lamps=[...document.querySelectorAll('.lamp')];
-const S={lanes:2,minHold:1.0,maxHold:3.0,antiMs:100,screenLag:0,autoDelay:4,sound:true,auto:false,graphRuns:10,colors:[...DEFAULT_COLORS]};
+const S={lanes:2,minHold:1.0,maxHold:3.0,antiMs:100,screenLag:0,autoDelay:4,sound:true,auto:false,graphRuns:10,startScreen:true,reveal:'instant',colors:[...DEFAULT_COLORS]};
 let data={history:[],names:LANE_IDX.map(i=>`Driver ${i+1}`)};
 let state='idle', laneRes=LANE_IDX.map(()=>null), autoT=null, ws=null, connected=false;
 let dbgOpen=false;
@@ -379,7 +381,7 @@ function connect(){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!ws||ws.readyState>1))connect()});
 const send=t=>{if(ws&&ws.readyState===1)ws.send(t)};
-function sendCfg(){send(`cfg ${S.lanes} ${Math.round(S.minHold*1000)} ${Math.round(S.maxHold*1000)}`)}
+function sendCfg(){send(`cfg ${S.lanes} ${Math.round(S.minHold*1000)} ${Math.round(S.maxHold*1000)} ${Math.round(S.antiMs)}`)}
 function requestStart(){if(!connected||dbgOpen||state==='sequence'||state==='go')return;clearTimeout(autoT);try{ac()}catch(e){}send('start')}
 function requestAbort(){clearTimeout(autoT);send('abort');stopPlan();if(S.auto)toggleAuto();if(state!=='sequence'&&state!=='go'){lampsOff();setStatus('','READY')}}
 
@@ -419,23 +421,28 @@ function startPlan(m){
   ev.push({at:L(m.t+m.n*cyc),f:()=>{allLamps('on');setStatus('live','HOLD')}});
   const go=L(m.t+m.n*cyc+m.hold);
   ev.push({at:go,go:1,f:()=>{lampsOff();state='go';setStatus('go','GO')}});
-  plan={ev,go,shown:null,synced:!!c,rtt:c?c.rtt:null,test:!!m.test};
+  plan={ev,go,id:m.id,shown:null,synced:!!c,rtt:c?c.rtt:null,test:!!m.test};
   cancelAnimationFrame(rafId);rafId=requestAnimationFrame(tick);
 }
 function tick(ts){
   rafId=0; if(!plan)return;
   const d=ts-lastTs; lastTs=ts; if(d>4&&d<50)frameMs+=(d-frameMs)*.1;   // learns 60/120/144 Hz
   const shows=ts+frameMs;            // changes made now appear at the next refresh
-  while(plan.ev.length&&plan.ev[0].at<=shows+frameMs/2){const e=plan.ev.shift();e.f();if(e.go)plan.shown=shows}
+  while(plan.ev.length&&plan.ev[0].at<=shows+frameMs/2){const e=plan.ev.shift();e.f();if(e.go){plan.shown=shows;reportShown()}}
   if(plan.ev.length)rafId=requestAnimationFrame(tick);
+}
+// The start screen tells the ESP how far its lights-out frame landed from the
+// schedule (plus its display lag); the ESP corrects every lane's time by that.
+// A hidden tab's frame times are meaningless, so it stays quiet.
+function reportShown(){
+  if(!S.startScreen||plan.test||document.hidden||plan.id==null)return;
+  send(`shown ${plan.id} ${Math.round((plan.shown-plan.go+(S.screenLag||0))*1000)}`);
 }
 function flushPlan(){   // tab hidden or frames stalled: catch up now
   if(!plan)return;
   while(plan.ev.length){const e=plan.ev.shift();e.f();if(e.go)plan.shown=performance.now()}
 }
 function stopPlan(){cancelAnimationFrame(rafId);rafId=0;plan=null}
-// ESP time from its scheduled lights-out → time from when this screen went dark
-function screenRt(us){return us/1000-(plan&&plan.shown!=null?plan.shown-plan.go:0)-(S.screenLag||0)}
 
 function handle(m){
   if(m.ev==='sync'){onSync(m);return}
@@ -445,15 +452,15 @@ function handle(m){
     case 'start':
       clearTimeout(autoT); state='sequence'; lampsOff(); startPlan(m);
       if(m.test)break;
-      laneRes=LANE_IDX.map(()=>null);
+      laneRes=LANE_IDX.map(()=>null); held=LANE_IDX.map(()=>null);
       showAllCharts(); setStatus('live','GET READY'); break;
     case 'result':
       onResult(m); break;
     case 'done':
-      finish(); break;
+      finish(m.win|0); break;
     case 'aborted':
       stopPlan(); if(ST.on)stEnd('Test aborted.');
-      state='idle'; lampsOff(); setStatus('','READY'); showAllCharts(); break;
+      state='idle'; lampsOff(); setStatus('','READY'); showAllCharts(); revealHeld(); break;
     // button test
     case 'pins':
       if(Array.isArray(m.v)) m.v.forEach((v,i)=>{const d=dbg[i];if(!d)return;const down=v===0;if(down&&!d.down)d.since=performance.now();d.down=down;renderTile(i)});
@@ -464,27 +471,31 @@ function handle(m){
       if(dbgOpen) dbgStat(m); break;
   }
 }
+// The ESP has already corrected the time (by the start screen's lights-out
+// frame) and judged it ok / anti / jump, so every screen shows the same thing.
+let held=LANE_IDX.map(()=>null);   // "Together" reveal: results wait here until the round ends
 function onResult(m){
   const i=m.lane; if(!(i>=0&&i<MAX_LANES))return;
   let res;
   if(m.status==='jump') res={status:'jump'};
   else if(m.status==='none') res={status:'none'};
-  else{
-    flushPlan();
-    const rt=screenRt(m.us), status=(S.antiMs>0&&rt<S.antiMs)?'anti':'ok';
-    const prevBest=stats(data.names[i]).best;
-    res={rt,status,pb:status==='ok'&&(prevBest==null||rt<prevBest)};
-  }
+  else{flushPlan();res={rt:m.us/1000,status:m.status==='anti'?'anti':'ok'}}
+  if(S.reveal==='together'){held[i]=res;return}
+  commit(i,res);
+}
+function commit(i,res){
+  if(res.status==='ok'){const prevBest=stats(data.names[i]).best;res.pb=prevBest==null||res.rt<prevBest}
   laneRes[i]=res;
   if(res.status!=='none') record(i,res.rt==null?null:res.rt,res.status);
   showResult(i);
 }
-function markWinner(){
-  if(S.lanes<2)return null;
+function revealHeld(){LANE_IDX.forEach(i=>{if(held[i]){commit(i,held[i]);held[i]=null}})}
+function markWinner(mask){
+  if(S.lanes<2||!mask)return null;
+  const winners=LANE_IDX.filter(i=>(mask>>i&1)&&laneRes[i]&&laneRes[i].status==='ok');
+  if(!winners.length)return null;
+  const best=laneRes[winners[0]].rt;
   const ok=LANE_IDX.filter(i=>i<S.lanes&&laneRes[i]&&laneRes[i].status==='ok');
-  if(!ok.length)return null;
-  const best=Math.min(...ok.map(i=>laneRes[i].rt));
-  const winners=ok.filter(i=>laneRes[i].rt===best);
   winners.forEach(i=>laneEls[i].classList.add('win'));
   // everyone else with a valid time sees their gap to the winner
   ok.filter(i=>!winners.includes(i)&&!laneRes[i].pb).forEach(i=>{
@@ -493,9 +504,10 @@ function markWinner(){
   });
   return winners;
 }
-function finish(){
+function finish(win){
   state='done';
-  const w=markWinner();
+  revealHeld();
+  const w=markWinner(win);
   setStatus('',w?(w.length>1?'DEAD HEAT':`WINNER · LANE ${w[0]+1}`):'DONE');
   setTimeout(()=>{if(state==='done')lampsOff()},1500);
   renderAll(); save();
@@ -629,6 +641,7 @@ document.querySelectorAll('.colors').forEach(box=>{
 function applyUI(){
   $('#sLanes').value=String(S.lanes);$('#sMin').value=S.minHold;$('#sMax').value=S.maxHold;
   $('#sAnti').value=S.antiMs;$('#sLag').value=S.screenLag;$('#sAuto').value=S.autoDelay;$('#sSound').checked=S.sound;$('#sRuns').value=String(S.graphRuns);
+  $('#sStartScr').checked=S.startScreen;$('#sReveal').value=S.reveal;
   laneEls.forEach((el,i)=>el.querySelector('.nm').textContent=data.names[i]);
   $('#bAuto').classList.toggle('on',S.auto);
   applyColors(); applyLaneCount();
@@ -638,6 +651,7 @@ function readUI(){
   S.minHold=Math.min(10,Math.max(0.3,+$('#sMin').value||1));
   S.maxHold=Math.min(10,Math.max(0.3,+$('#sMax').value||3));
   S.antiMs=Math.max(0,+$('#sAnti').value||0);S.screenLag=Math.min(200,Math.max(0,+$('#sLag').value||0));S.autoDelay=Math.max(1,+$('#sAuto').value||4);S.sound=$('#sSound').checked;S.graphRuns=+$('#sRuns').value;
+  S.startScreen=$('#sStartScr').checked;S.reveal=$('#sReveal').value==='together'?'together':'instant';
   applyLaneCount();save();sendCfg();
 }
 document.querySelectorAll('#settings select,#settings input[type=number],#settings input[type=checkbox]').forEach(el=>el.addEventListener('change',readUI));
@@ -685,7 +699,8 @@ function dbgStat(m){
   let wifi;
   if(m.ap) wifi='hotspot mode';
   else{const r=m.rssi;wifi=`${r} dBm · ${r>=-60?'excellent':r>=-70?'good':r>=-80?'fair':'weak'}`}
-  $('#dStat').innerHTML=`<span><i></i>ESP online</span><span>WiFi: ${wifi}</span><span>Uptime ${upt}</span><span>Free memory ${Math.round(m.heap/1024)} KB</span>`;
+  const c=clockBest(), sync=c?`±${(c.rtt/2).toFixed(1)} ms`:'not synced';
+  $('#dStat').innerHTML=`<span><i></i>ESP online</span><span>WiFi: ${wifi}</span><span>Clock sync ${sync}</span><span>Uptime ${upt}</span><span>Free memory ${Math.round(m.heap/1024)} KB</span>`;
 }
 function openDebug(){
   if(dbgOpen)return;

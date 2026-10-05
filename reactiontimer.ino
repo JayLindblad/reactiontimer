@@ -55,9 +55,11 @@ const uint16_t FLASH_OFF_MS = 300;
 const uint8_t  FLASHES      = 5;
 const uint16_t TIMEOUT_MS   = 3000;         // no press this long after GO = "no press"
 const uint16_t LEAD_MS      = 250;          // plan is announced this far ahead so the page has it in time
+const uint16_t CORR_WAIT_MS = 250;          // longest a press waits after GO for the start screen's correction
 uint8_t  cfgLanes   = 2;                    // updated by the web page
 uint16_t cfgMinHold = 1000;                 // solid-LED hold range, ms
 uint16_t cfgMaxHold = 3000;
+uint16_t cfgAntiMs  = 100;                  // faster than this = anticipated, can't win. 0 = off
 
 ESP8266WebServer server(80);
 WebSocketsServer ws(81);
@@ -73,6 +75,14 @@ volatile bool     pressed[4], jumped[4];
 volatile bool     startReq = false;
 
 bool     reported[4];
+int32_t  rtUs[4];                                // each lane's corrected time, for picking the winner
+bool     okLane[4];
+// ---------- Start screen correction ----------
+// The screen drivers watch reports how far its lights-out frame landed from
+// the scheduled GO (plus its display lag). Every time is corrected by that.
+uint16_t roundId   = 0;
+bool     corrKnown = false;
+int32_t  corrUs    = 0;
 // ---------- Button test mode ----------
 bool     debugMode   = false;
 uint32_t dbgLastMs   = 0;
@@ -128,7 +138,9 @@ void startRound(bool test = false) {
   if (phase != IDLE) return;
   testRound = test;
   activeLanes = test ? 1 : cfgLanes;
-  for (uint8_t i = 0; i < 4; i++) { pressed[i] = jumped[i] = false; reported[i] = false; }
+  for (uint8_t i = 0; i < 4; i++) { pressed[i] = jumped[i] = false; reported[i] = okLane[i] = false; }
+  roundId++;
+  corrKnown = false; corrUs = 0;
   uint16_t lo = test ? 500 : min(cfgMinHold, cfgMaxHold), hi = test ? 1000 : max(cfgMinHold, cfgMaxHold);
   holdMs = lo + (hi > lo ? RANDOM_REG32 % (hi - lo + 1) : 0);   // hardware random number
   nFlashes = test ? 0 : FLASHES;
@@ -142,21 +154,45 @@ void startRound(bool test = false) {
   phase = SEQ;
   char tn[20], ts[20];
   fmtMs(tn, now); fmtMs(ts, seqStartUs);
-  emit("{\"ev\":\"start\",\"lanes\":%u,\"now\":%s,\"t\":%s,\"n\":%u,\"on\":%u,\"off\":%u,\"hold\":%lu,\"test\":%u}",
-       activeLanes, tn, ts, nFlashes, FLASH_ON_MS, FLASH_OFF_MS, (unsigned long)holdMs, test);
+  emit("{\"ev\":\"start\",\"id\":%u,\"lanes\":%u,\"now\":%s,\"t\":%s,\"n\":%u,\"on\":%u,\"off\":%u,\"hold\":%lu,\"test\":%u}",
+       roundId, activeLanes, tn, ts, nFlashes, FLASH_ON_MS, FLASH_OFF_MS, (unsigned long)holdMs, test);
 }
 
 void releaseInject() {
   if (injected && !injReleased) { pinMode(LANE_PIN[0], INPUT_PULLUP); injReleased = true; }
 }
 
+// Report one lane's press: corrected by the start screen, then judged here
+void reportPress(uint8_t i) {
+  reported[i] = true;
+  unsigned long raw = pressUs[i] - goUs32;
+  if (testRound) {   // self-test checks raw interrupt timing, so no correction
+    emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu,\"inj\":%lu}", i, raw,
+         (unsigned long)(injUs - goUs32));
+    return;
+  }
+  int32_t rt = (int32_t)raw - corrUs;
+  const char* st;
+  if (rt < 0) st = "jump";                                       // pressed before the screen went dark
+  else if (cfgAntiMs && rt < (int32_t)cfgAntiMs * 1000) st = "anti";
+  else { st = "ok"; okLane[i] = true; rtUs[i] = rt; }
+  emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"%s\",\"us\":%ld,\"cor\":%u}", i, st, (long)rt, corrKnown);
+}
+
 void finishRound() {
   releaseInject();
   for (uint8_t i = 0; i < activeLanes; i++)
     if (!reported[i]) { reported[i] = true; emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"none\"}", i); }
+  // Winner: fastest valid time (ties are a dead heat). Needs 2+ lanes.
+  uint8_t win = 0;
+  if (!testRound && activeLanes > 1) {
+    int32_t best = INT32_MAX;
+    for (uint8_t i = 0; i < activeLanes; i++) if (okLane[i] && rtUs[i] < best) best = rtUs[i];
+    for (uint8_t i = 0; i < activeLanes; i++) if (okLane[i] && rtUs[i] == best) win |= 1 << i;
+  }
   phase = IDLE;
   digitalWrite(LED_PIN, LED_OFF);
-  emit("{\"ev\":\"done\"}");
+  emit("{\"ev\":\"done\",\"win\":%u}", win);
 }
 
 void abortRound() {
@@ -167,7 +203,8 @@ void abortRound() {
 }
 
 // ---------- WebSocket commands from the page ----------
-//   "sync <n>" | "start" | "selftest" | "abort" | "cfg <lanes> <minHoldMs> <maxHoldMs>"
+//   "sync <n>" | "start" | "selftest" | "abort" | "shown <roundId> <offsetUs>"
+//   "cfg <lanes> <minHoldMs> <maxHoldMs> [antiMs]"
 void onWs(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
   if (type == WStype_CONNECTED) {
     char b[64];
@@ -186,6 +223,15 @@ void onWs(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
     else if (!strncmp(m, "start", 5))    startRound();
     else if (!strncmp(m, "selftest", 8)) startRound(true);
     else if (!strncmp(m, "abort", 5)) abortRound();
+    else if (!strncmp(m, "shown", 5)) {   // start screen: its lights-out frame vs the scheduled GO
+      char* e;
+      unsigned long id = strtoul(m + 5, &e, 10);
+      long off = strtol(e, nullptr, 10);
+      if (phase != IDLE && !testRound && !corrKnown && id == roundId) {
+        corrUs = constrain(off, -100000L, 300000L);
+        corrKnown = true;
+      }
+    }
         else if (!strncmp(m, "debug", 5)) {
       bool on = (m[6] == '1');
       dbgLastMs = millis();
@@ -200,12 +246,14 @@ void onWs(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
       if (phase == IDLE) digitalWrite(LED_PIN, m[4] == '1' ? LED_ON : LED_OFF);
     }
     else if (!strncmp(m, "cfg", 3)) {
-      unsigned a, b, c;
-      if (sscanf(m + 3, "%u %u %u", &a, &b, &c) == 3) {
+      unsigned a, b, c, d;
+      int got = sscanf(m + 3, "%u %u %u %u", &a, &b, &c, &d);
+      if (got >= 3) {
         cfgLanes   = constrain(a, 1u, 4u);
         cfgMinHold = constrain(b, 300u, 10000u);
         cfgMaxHold = constrain(c, 300u, 10000u);
       }
+      if (got == 4) cfgAntiMs = min(d, 1000u);
     }
   }
 }
@@ -298,14 +346,8 @@ void loop() {
       if (jumped[i]) {
         reported[i] = true;
         emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"jump\"}", i);
-      } else if (pressed[i]) {
-        reported[i] = true;
-        unsigned long us = pressUs[i] - goUs32;
-        if (testRound)
-          emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu,\"inj\":%lu}", i, us,
-               (unsigned long)(injUs - goUs32));
-        else
-          emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu}", i, us);
+      } else if (pressed[i] && (testRound || corrKnown || micros64() >= goUs + CORR_WAIT_MS * 1000ULL)) {
+        reportPress(i);   // waits briefly for the start screen's correction; goes uncorrected without one
       }
     }
     bool all = true;
