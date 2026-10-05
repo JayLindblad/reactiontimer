@@ -77,9 +77,25 @@ bool     reported[4];
 bool     debugMode   = false;
 uint32_t dbgLastMs   = 0;
 uint32_t dbgStatusMs = 0;
-volatile uint16_t edgeCount[5];                  // lanes 1-4, start
+volatile uint16_t edgeCount[5];                  // lanes 1-4, start — only ever counts up
 uint8_t  dbgLevel[5] = {1, 1, 1, 1, 1};
 const uint8_t DBG_PIN[5] = {5, 4, 12, 13, 14};
+// ---------- Wiring health (always running, not just in test mode) ----------
+// loop() polls every pin. A real press holds the contact for tens of ms, so the
+// poll sees it LOW. An interrupt edge the poll never sees as LOW is a glitch:
+// noise on the cable, which in a round would count as a jump start.
+const uint8_t  DEBOUNCE_MS = 20;                 // ignore level flips this soon after a change
+const uint8_t  SETTLE_MS   = 5;                  // stray edges this old with the pin still HIGH = glitch
+const uint8_t  XT_MS       = 20;                 // glitch this close to another pin's change = crosstalk
+const uint16_t STUCK_MS    = 2000;               // LOW this long while idle = held down / shorted
+uint16_t lastEdges[5];                           // edgeCount at the previous poll
+uint16_t bounceEdges[5], suspect[5];             // edges around the current press / not yet judged
+uint32_t changedMs[5], suspectMs[5];
+bool     bounceSent[5] = {true, true, true, true, true};
+bool     lowSeen[4];                             // poll saw the lane LOW since the round started
+uint16_t glitches[5];
+uint8_t  stuckMask = 0;
+uint32_t loopPrevUs = 0, loopMaxUs = 0;          // worst gap between loop() runs
 uint8_t  step, nFlashes;
 uint32_t lastStartMs, holdMs;
 uint64_t seqStartUs, goUs;                       // the round's plan, in micros64() time
@@ -94,8 +110,9 @@ void IRAM_ATTR laneHit(uint8_t i) {
   uint32_t now = micros();
   edgeCount[i]++;
   if (phase == IDLE || i >= activeLanes || pressed[i] || jumped[i]) return;
+  pressUs[i] = now;
   if ((int32_t)(now - goUs32) < 0) jumped[i] = true;
-  else { pressUs[i] = now; pressed[i] = true; }
+  else pressed[i] = true;
 }
 void IRAM_ATTR isrLane0() { laneHit(0); }
 void IRAM_ATTR isrLane1() { laneHit(1); }
@@ -105,7 +122,7 @@ void IRAM_ATTR isrStart() { edgeCount[4]++; startReq = true; }
 
 // ---------- Helpers ----------
 void emit(const char* fmt, ...) {
-  char buf[160];
+  char buf[200];
   va_list a; va_start(a, fmt); vsnprintf(buf, sizeof buf, fmt, a); va_end(a);
   ws.broadcastTXT(buf);
 }
@@ -126,9 +143,15 @@ uint64_t stepAtUs(uint8_t s) {
 // Test rounds: no flashes, short hold, one lane that the ESP presses itself
 void startRound(bool test = false) {
   if (phase != IDLE) return;
+  // A lane that's already LOW would never fire its press interrupt — refuse rather than run a dead lane
+  char held[12] = "";
+  for (uint8_t i = 0; i < (test ? 1 : cfgLanes); i++)
+    if (digitalRead(LANE_PIN[i]) == LOW)
+      snprintf(held + strlen(held), sizeof held - strlen(held), "%s%u", held[0] ? "," : "", i);
+  if (held[0]) { emit("{\"ev\":\"refused\",\"stuck\":[%s],\"test\":%u}", held, test); return; }
   testRound = test;
   activeLanes = test ? 1 : cfgLanes;
-  for (uint8_t i = 0; i < 4; i++) { pressed[i] = jumped[i] = false; reported[i] = false; }
+  for (uint8_t i = 0; i < 4; i++) { pressed[i] = jumped[i] = false; reported[i] = false; lowSeen[i] = false; }
   uint16_t lo = test ? 500 : min(cfgMinHold, cfgMaxHold), hi = test ? 1000 : max(cfgMinHold, cfgMaxHold);
   holdMs = lo + (hi > lo ? RANDOM_REG32 % (hi - lo + 1) : 0);   // hardware random number
   nFlashes = test ? 0 : FLASHES;
@@ -150,10 +173,77 @@ void releaseInject() {
   if (injected && !injReleased) { pinMode(LANE_PIN[0], INPUT_PULLUP); injReleased = true; }
 }
 
+// Report a lane's press once it's confirmed: the poll saw the pin LOW (a real
+// press), or 10 ms went by without that — an electrical glitch, flagged "noise".
+void reportLane(uint8_t i, bool force) {
+  if (reported[i] || (!jumped[i] && !pressed[i])) return;
+  bool noise = !lowSeen[i];
+  if (noise && !force && micros() - pressUs[i] < 10000) return;
+  reported[i] = true;
+  if (jumped[i]) {
+    emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"jump\",\"noise\":%u}", i, noise);
+  } else {
+    unsigned long us = pressUs[i] - goUs32;
+    if (testRound)
+      emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu,\"inj\":%lu}", i, us,
+           (unsigned long)(injUs - goUs32));
+    else
+      emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu,\"noise\":%u}", i, us, noise);
+  }
+}
+
+// ---------- Wiring health: poll every pin once per loop() ----------
+void pollPins() {
+  uint32_t nowMs = millis();
+  uint8_t mask = 0;
+  for (uint8_t i = 0; i < 5; i++) {
+    // Edges first, then the level: an edge landing in between is judged on the next pass
+    noInterrupts(); uint16_t e = edgeCount[i]; interrupts();
+    uint16_t de = e - lastEdges[i]; lastEdges[i] = e;
+    uint8_t v = digitalRead(DBG_PIN[i]);
+    if (v == LOW && i < 4) lowSeen[i] = true;
+    bool settling = nowMs - changedMs[i] < DEBOUNCE_MS;
+
+    if (v != dbgLevel[i] && !settling) {
+      dbgLevel[i] = v; changedMs[i] = nowMs;
+      if (v == LOW) { bounceEdges[i] = de + suspect[i]; bounceSent[i] = false; }  // those edges were this press starting
+      suspect[i] = 0;
+      if (debugMode) emit("{\"ev\":\"pin\",\"i\":%u,\"v\":%u,\"e\":%u}", i, v, v == LOW ? bounceEdges[i] : 0);
+    } else if (settling || v == LOW) {
+      if (dbgLevel[i] == LOW) bounceEdges[i] += de;  // bounce while pressed; release bounce is dropped
+    } else if (de) {
+      if (!suspect[i]) suspectMs[i] = nowMs;
+      suspect[i] += de;
+    }
+
+    // Edges while the pin stayed HIGH: glitch. If another pin changed at the same moment, it's crosstalk.
+    if (suspect[i] && nowMs - suspectMs[i] >= SETTLE_MS) {
+      glitches[i] += suspect[i];
+      if (debugMode)
+        for (uint8_t k = 0; k < 5; k++)
+          if (k != i && (uint32_t)abs((int32_t)(suspectMs[i] - changedMs[k])) <= XT_MS)
+            emit("{\"ev\":\"xt\",\"from\":%u,\"to\":%u}", k, i);
+      suspect[i] = 0;
+    }
+    if (!bounceSent[i] && !settling) {
+      bounceSent[i] = true;
+      if (debugMode) emit("{\"ev\":\"bnc\",\"i\":%u,\"e\":%u}", i, bounceEdges[i]);
+    }
+    if (dbgLevel[i] == LOW && nowMs - changedMs[i] >= STUCK_MS) mask |= 1 << i;
+  }
+  // Only judged between rounds: holding a button after pressing it mid-round is normal
+  if (phase == IDLE && mask != stuckMask) {
+    stuckMask = mask;
+    emit("{\"ev\":\"stuck\",\"m\":%u}", mask);
+  }
+}
+
 void finishRound() {
   releaseInject();
-  for (uint8_t i = 0; i < activeLanes; i++)
+  for (uint8_t i = 0; i < activeLanes; i++) {
+    reportLane(i, true);
     if (!reported[i]) { reported[i] = true; emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"none\"}", i); }
+  }
   phase = IDLE;
   digitalWrite(LED_PIN, LED_OFF);
   emit("{\"ev\":\"done\"}");
@@ -168,10 +258,11 @@ void abortRound() {
 
 // ---------- WebSocket commands from the page ----------
 //   "sync <n>" | "start" | "selftest" | "abort" | "cfg <lanes> <minHoldMs> <maxHoldMs>"
+//   test mode: "debug 0|1" (heartbeat) | "led 0|1" | "info" | "dreset"
 void onWs(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
   if (type == WStype_CONNECTED) {
     char b[64];
-    snprintf(b, sizeof b, "{\"ev\":\"hello\",\"busy\":%s}", phase == IDLE ? "false" : "true");
+    snprintf(b, sizeof b, "{\"ev\":\"hello\",\"busy\":%s,\"stuck\":%u}", phase == IDLE ? "false" : "true", stuckMask);
     ws.sendTXT(num, b);
   } else if (type == WStype_TEXT) {
     char m[64];
@@ -189,12 +280,26 @@ void onWs(uint8_t num, WStype_t type, uint8_t* payload, size_t len) {
         else if (!strncmp(m, "debug", 5)) {
       bool on = (m[6] == '1');
       dbgLastMs = millis();
-      if (on && !debugMode) for (uint8_t i = 0; i < 5; i++) edgeCount[i] = 0;
+      if (on && !debugMode) loopMaxUs = 0;
       if (!on && debugMode && phase == IDLE) digitalWrite(LED_PIN, LED_OFF);
       debugMode = on;
-      for (uint8_t i = 0; i < 5; i++) dbgLevel[i] = digitalRead(DBG_PIN[i]);
       if (on) emit("{\"ev\":\"pins\",\"v\":[%u,%u,%u,%u,%u]}",
                    dbgLevel[0], dbgLevel[1], dbgLevel[2], dbgLevel[3], dbgLevel[4]);
+    }
+    else if (!strncmp(m, "dreset", 6)) {
+      for (uint8_t i = 0; i < 5; i++) glitches[i] = 0;
+      loopMaxUs = 0;
+    }
+    else if (!strncmp(m, "info", 4)) {   // board health, once per test-panel open
+      bool ap = WiFi.getMode() == WIFI_AP;
+      char b[220];
+      snprintf(b, sizeof b,
+               "{\"ev\":\"info\",\"rst\":\"%s\",\"rr\":%u,\"build\":\"" __DATE__ " " __TIME__ "\",\"ip\":\"%s\","
+               "\"ap\":%u,\"chip\":\"%06X\",\"flash\":%u,\"core\":\"%s\"}",
+               ESP.getResetReason().c_str(), (unsigned)ESP.getResetInfoPtr()->reason,
+               (ap ? WiFi.softAPIP() : WiFi.localIP()).toString().c_str(), ap,
+               ESP.getChipId(), ESP.getFlashChipRealSize() / 1024, ESP.getCoreVersion().c_str());
+      ws.sendTXT(num, b);
     }
     else if (!strncmp(m, "led", 3)) {
       if (phase == IDLE) digitalWrite(LED_PIN, m[4] == '1' ? LED_ON : LED_OFF);
@@ -254,10 +359,14 @@ void setup() {
 }
 
 void loop() {
+  uint32_t nowUs = micros();                      // worst gap between runs: how long WiFi etc. can stall us
+  if (loopPrevUs && nowUs - loopPrevUs > loopMaxUs) loopMaxUs = nowUs - loopPrevUs;
+  loopPrevUs = nowUs;
+
   ws.loop();
   server.handleClient();
   MDNS.update();
-
+  pollPins();
 
   // Physical start button (1 s lockout also absorbs switch bounce)
   if (startReq) {
@@ -293,21 +402,7 @@ void loop() {
 
   // Report results as they happen
   if (phase != IDLE) {
-    for (uint8_t i = 0; i < activeLanes; i++) {
-      if (reported[i]) continue;
-      if (jumped[i]) {
-        reported[i] = true;
-        emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"jump\"}", i);
-      } else if (pressed[i]) {
-        reported[i] = true;
-        unsigned long us = pressUs[i] - goUs32;
-        if (testRound)
-          emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu,\"inj\":%lu}", i, us,
-               (unsigned long)(injUs - goUs32));
-        else
-          emit("{\"ev\":\"result\",\"lane\":%u,\"status\":\"ok\",\"us\":%lu}", i, us);
-      }
-    }
+    for (uint8_t i = 0; i < activeLanes; i++) reportLane(i, false);
     bool all = true;
     for (uint8_t i = 0; i < activeLanes; i++) if (!reported[i]) all = false;
     if (all || (phase == GO && micros64() >= goUs + TIMEOUT_MS * 1000ULL)) finishRound();
@@ -317,20 +412,14 @@ void loop() {
     if (millis() - dbgLastMs > 10000) {           // page closed without saying so
       debugMode = false;
       if (phase == IDLE) digitalWrite(LED_PIN, LED_OFF);
-    } else {
-      for (uint8_t i = 0; i < 5; i++) {
-        uint8_t v = digitalRead(DBG_PIN[i]);
-        if (v != dbgLevel[i]) {
-          dbgLevel[i] = v;
-          noInterrupts(); uint16_t e = edgeCount[i]; edgeCount[i] = 0; interrupts();
-          emit("{\"ev\":\"pin\",\"i\":%u,\"v\":%u,\"e\":%u}", i, v, e);
-        }
-      }
-      if (millis() - dbgStatusMs >= 1000) {
-        dbgStatusMs = millis();
-        emit("{\"ev\":\"stat\",\"rssi\":%d,\"up\":%lu,\"heap\":%u,\"ap\":%u}",
-             WiFi.RSSI(), millis() / 1000, ESP.getFreeHeap(), WiFi.getMode() == WIFI_AP);
-      }
+    } else if (millis() - dbgStatusMs >= 1000) {   // pin changes are sent by pollPins()
+      dbgStatusMs = millis();
+      emit("{\"ev\":\"stat\",\"rssi\":%d,\"up\":%lu,\"heap\":%u,\"frag\":%u,\"ap\":%u,\"loop\":%lu,\"cl\":%u,"
+           "\"g\":[%u,%u,%u,%u,%u]}",
+           WiFi.RSSI(), millis() / 1000, ESP.getFreeHeap(), ESP.getHeapFragmentation(), WiFi.getMode() == WIFI_AP,
+           (unsigned long)loopMaxUs, ws.connectedClients(),
+           glitches[0], glitches[1], glitches[2], glitches[3], glitches[4]);
+      loopMaxUs = 0;
     }
   }
 }
